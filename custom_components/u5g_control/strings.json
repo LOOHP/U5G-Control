@@ -1,0 +1,72 @@
+{
+  "title": "U5G Control",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to a U5G modem",
+        "description": "Enter the Device SSH credentials configured in UniFi Network.",
+        "data": {
+          "host": "Host or IP address",
+          "port": "SSH port",
+          "username": "SSH username",
+          "password": "SSH password"
+        }
+      },
+      "placeholder": {
+        "title": "Choose a placeholder band for {model}",
+        "description": "Choose an unused NR band to represent a disabled 5G mode. The selected band will be removed from the switch choices on the next page.",
+        "data": {
+          "disabled_band": "Disabled-mode placeholder NR band"
+        }
+      },
+      "bands": {
+        "title": "Choose switches for {model}",
+        "description": "Select the band switches to expose. Nothing is selected by default. The placeholder {disabled_band} is unavailable here so it cannot also become a toggle.",
+        "data": {
+          "lte_bands": "LTE bands to expose",
+          "sa_bands": "5G SA bands to expose",
+          "nsa_bands": "5G NSA bands to expose"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reconnect to the U5G modem",
+        "description": "Enter the updated Device SSH credentials.",
+        "data": {
+          "username": "SSH username",
+          "password": "SSH password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to connect to the modem",
+      "invalid_auth": "SSH authentication failed",
+      "cannot_identify": "The modem did not return a stable hardware identity"
+    },
+    "abort": {
+      "already_configured": "This modem is already configured",
+      "wrong_modem": "The credentials belong to a different modem"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Configure radio behaviour",
+        "data": {
+          "disabled_band": "Placeholder band used when a mode is disabled",
+          "scan_interval": "Polling interval (seconds)",
+          "auto_reapply": "Reapply desired settings after UniFi resets them"
+        }
+      },
+      "bands": {
+        "title": "Configure band switches",
+        "description": "The placeholder {disabled_band} is excluded from the NR choices.",
+        "data": {
+          "lte_bands": "LTE band switches",
+          "sa_bands": "5G SA band switches",
+          "nsa_bands": "5G NSA band switches",
+          "forget_sims": "Forget inactive SIM profiles"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "entity": {
+    "switch": {
+      "enable_sa": {"default": "mdi:signal-5g"},
+      "enable_nsa": {"default": "mdi:signal-5g"}
+    }
+  }
+}
