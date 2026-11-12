@@ -6,6 +6,8 @@ An experimental Home Assistant custom integration for controlling radio modes an
 
 Each configured physical modem is represented as a Home Assistant hub device. Every SIM observed in that modem becomes a persistent child device named from its SPN and the last four ICCID digits, for example `O2 [5244]`. Removing a SIM makes its entities unavailable without deleting its saved profile; reinserting it reactivates the same device.
 
+Radio preferences are isolated per SIM. Inserting a remembered SIM restores its saved policy. A newly observed SIM starts from the modem baseline captured before the integration's first managed write instead of inheriting the previously inserted SIM's masks.
+
 Each supported SIM child exposes:
 
 - **Enable 5G SA** and **Enable 5G NSA** switches.
@@ -61,7 +63,7 @@ Open the integration entry and select **Configure** to:
 - Enable automatic policy reapplication after UniFi configuration drift.
 - Forget inactive SIM profiles.
 
-The active SIM cannot be forgotten. Forgetting a SIM removes only its Home Assistant profile; reinserting it creates a fresh child device.
+Inactive SIMs can also be deleted directly from their Home Assistant device page. The active SIM and modem hub cannot be deleted this way. Forgetting a SIM removes only its Home Assistant profile; reinserting it creates a fresh child device.
 
 ## Important limitations
 

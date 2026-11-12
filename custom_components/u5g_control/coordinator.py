@@ -30,11 +30,19 @@ from .const import (
     STORE_KEY_PREFIX,
     STORE_VERSION,
 )
-from .models import ModemSnapshot, SimProfile, sim_display_name, sim_identifier
+from .models import (
+    ModemSnapshot,
+    RadioPreference,
+    SimProfile,
+    sim_display_name,
+    sim_identifier,
+)
 from .policy import (
     PolicyError,
     build_preference,
     infer_mode_flags,
+    initial_sim_radio_state,
+    should_apply_sim_profile,
     with_band,
 )
 
@@ -75,6 +83,9 @@ class U5GCoordinator(DataUpdateCoordinator[ModemSnapshot]):
         self.exposed_nsa_bands.discard(self.disabled_band)
         self.profiles: dict[str, SimProfile] = {}
         self._last_seen_persisted: dict[str, Any] = {}
+        self._modem_default_preference: RadioPreference | None = None
+        self._modem_default_preference_placeholder: int | None = None
+        self._last_active_sim_id: str | None = None
         self.active_sim_id: str | None = None
         self._write_lock = asyncio.Lock()
         self._store: Store[dict[str, Any]] = Store(
@@ -88,6 +99,37 @@ class U5GCoordinator(DataUpdateCoordinator[ModemSnapshot]):
             sim_id: SimProfile.from_dict(value)
             for sim_id, value in stored.get("profiles", {}).items()
         }
+        stored_default = stored.get("modem_default_preference")
+        if isinstance(stored_default, dict):
+            self._modem_default_preference = RadioPreference.from_dict(
+                stored_default
+            )
+            stored_placeholder = stored.get(
+                "modem_default_preference_placeholder"
+            )
+            self._modem_default_preference_placeholder = (
+                int(stored_placeholder)
+                if stored_placeholder is not None
+                else self.disabled_band
+            )
+        elif self.profiles:
+            # Backfill installations created before the hub baseline was
+            # stored explicitly. The oldest remembered default was captured
+            # before that SIM's first managed write.
+            first_profile = next(iter(self.profiles.values()))
+            self._modem_default_preference = self._copy_preference(
+                first_profile.default_preference
+            )
+            self._modem_default_preference_placeholder = (
+                first_profile.default_preference_placeholder
+                or self.disabled_band
+            )
+        self._last_active_sim_id = stored.get("last_active_sim_id")
+        if self._last_active_sim_id is None and self.profiles:
+            latest_profile = max(
+                self.profiles.values(), key=lambda profile: profile.last_seen or ""
+            )
+            self._last_active_sim_id = latest_profile.sim_id
         self._last_seen_persisted = {
             sim_id: parsed
             for sim_id, profile in self.profiles.items()
@@ -97,7 +139,20 @@ class U5GCoordinator(DataUpdateCoordinator[ModemSnapshot]):
 
     async def _async_save(self) -> None:
         await self._store.async_save(
-            {"profiles": {key: value.to_dict() for key, value in self.profiles.items()}}
+            {
+                "profiles": {
+                    key: value.to_dict() for key, value in self.profiles.items()
+                },
+                "modem_default_preference": (
+                    self._modem_default_preference.to_dict()
+                    if self._modem_default_preference
+                    else None
+                ),
+                "modem_default_preference_placeholder": (
+                    self._modem_default_preference_placeholder
+                ),
+                "last_active_sim_id": self._last_active_sim_id,
+            }
         )
         self._last_seen_persisted = {
             sim_id: parsed
@@ -135,28 +190,44 @@ class U5GCoordinator(DataUpdateCoordinator[ModemSnapshot]):
             return snapshot
 
         current_id = sim_identifier(self.modem_id, iccid)
+        previous_sim_id = self._last_active_sim_id
+        sim_changed = (
+            previous_sim_id is not None and previous_sim_id != current_id
+        )
         self.active_sim_id = current_id
         profile = self.profiles.get(current_id)
         is_new = profile is None
+        baseline_created = False
         persisted_before = None if is_new else profile.to_dict()
         if persisted_before is not None:
             persisted_before.pop("last_seen", None)
         if profile is None:
-            sa_enabled, nsa_enabled = infer_mode_flags(
-                snapshot.radio_preference, self.disabled_band
+            if self._modem_default_preference is None:
+                self._modem_default_preference = self._copy_preference(
+                    snapshot.radio_preference
+                )
+                self._modem_default_preference_placeholder = self.disabled_band
+                baseline_created = True
+            initial_preference = self._copy_preference(
+                self._modem_default_preference
             )
-            selected_sa_bands = set(snapshot.radio_preference.sa_bands) - {
-                self.disabled_band
-            }
-            selected_nsa_bands = set(snapshot.radio_preference.nsa_bands) - {
-                self.disabled_band
-            }
-            if not selected_sa_bands:
-                sa_enabled = False
-                selected_sa_bands = set(self.exposed_sa_bands)
-            if not selected_nsa_bands:
-                nsa_enabled = False
-                selected_nsa_bands = set(self.exposed_nsa_bands)
+            initial_placeholder = (
+                self._modem_default_preference_placeholder
+                or self.disabled_band
+            )
+            (
+                sa_enabled,
+                nsa_enabled,
+                selected_lte_bands,
+                selected_sa_bands,
+                selected_nsa_bands,
+            ) = initial_sim_radio_state(
+                initial_preference,
+                initial_placeholder,
+                self.disabled_band,
+                self.exposed_sa_bands,
+                self.exposed_nsa_bands,
+            )
             profile = SimProfile(
                 sim_id=current_id,
                 iccid=iccid,
@@ -168,15 +239,15 @@ class U5GCoordinator(DataUpdateCoordinator[ModemSnapshot]):
                 esim=bool(sim.get("esim", False)),
                 sa_enabled=sa_enabled,
                 nsa_enabled=nsa_enabled,
-                selected_lte_bands=set(snapshot.radio_preference.lte_bands),
+                selected_lte_bands=selected_lte_bands,
                 selected_sa_bands=selected_sa_bands,
                 selected_nsa_bands=selected_nsa_bands,
-                default_preference=self._copy_preference(snapshot.radio_preference),
-                default_preference_placeholder=self.disabled_band,
-                last_good_preference=self._copy_preference(snapshot.radio_preference),
-                last_good_preference_placeholder=self.disabled_band,
-                current_preference=self._copy_preference(snapshot.radio_preference),
-                current_preference_placeholder=self.disabled_band,
+                default_preference=self._copy_preference(initial_preference),
+                default_preference_placeholder=initial_placeholder,
+                last_good_preference=self._copy_preference(initial_preference),
+                last_good_preference_placeholder=initial_placeholder,
+                current_preference=self._copy_preference(initial_preference),
+                current_preference_placeholder=initial_placeholder,
             )
             self.profiles[current_id] = profile
         else:
@@ -185,7 +256,7 @@ class U5GCoordinator(DataUpdateCoordinator[ModemSnapshot]):
             profile.mnc = sim.get("mnc", profile.mnc)
             profile.slot = sim.get("slot", profile.slot)
             profile.esim = bool(sim.get("esim", profile.esim))
-            if not self.auto_reapply:
+            if not self.auto_reapply and not sim_changed:
                 self._sync_profile_from_live(profile, snapshot.radio_preference)
         now = dt_util.now()
         profile.last_seen = now.isoformat()
@@ -196,20 +267,45 @@ class U5GCoordinator(DataUpdateCoordinator[ModemSnapshot]):
             last_seen_persisted is None
             or now - last_seen_persisted >= _LAST_SEEN_SAVE_INTERVAL
         )
-        if is_new or persisted_before != persisted_after or last_seen_due:
-            await self._async_save()
-        if self.auto_reapply and not is_new:
+        should_apply_profile = should_apply_sim_profile(
+            is_new=is_new,
+            previous_sim_id=previous_sim_id,
+            current_sim_id=current_id,
+            auto_reapply=self.auto_reapply,
+        )
+        preference_applied = False
+        if should_apply_profile:
             try:
                 desired = build_preference(profile, self.disabled_band)
             except PolicyError:
-                return snapshot
-            if desired.writable_dict() != snapshot.radio_preference.writable_dict():
-                _LOGGER.info("Reapplying saved radio policy for %s after configuration drift", profile.name)
+                desired = None
+            if (
+                desired is not None
+                and desired.writable_dict()
+                != snapshot.radio_preference.writable_dict()
+            ):
+                reason = "SIM change" if is_new or sim_changed else "configuration drift"
+                _LOGGER.info(
+                    "Applying saved radio policy for %s after %s",
+                    profile.name,
+                    reason,
+                )
                 await self.client.async_set_preference(profile.iccid, desired)
                 profile.current_preference = self._copy_preference(desired)
                 profile.current_preference_placeholder = self.disabled_band
-                await self._async_save()
-                return await self.client.async_get_snapshot()
+                preference_applied = True
+                snapshot = await self.client.async_get_snapshot()
+        active_changed = self._last_active_sim_id != current_id
+        self._last_active_sim_id = current_id
+        if (
+            is_new
+            or baseline_created
+            or active_changed
+            or preference_applied
+            or persisted_before != persisted_after
+            or last_seen_due
+        ):
+            await self._async_save()
         return snapshot
 
     @staticmethod

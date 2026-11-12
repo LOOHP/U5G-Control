@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from .api import U5GClient
 from .const import (
@@ -15,6 +16,7 @@ from .const import (
     CONF_PASSWORD,
     CONF_PORT,
     CONF_USERNAME,
+    DOMAIN,
     PLATFORMS,
 )
 from .coordinator import U5GCoordinator
@@ -63,6 +65,39 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unloaded:
         await entry.runtime_data.client.async_close()
     return unloaded
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry[U5GRuntimeData],
+    device_entry: dr.AnyDeviceEntry,
+) -> bool:
+    """Forget an inactive SIM child when it is deleted from the device UI."""
+    runtime = getattr(config_entry, "runtime_data", None)
+    if runtime is None:
+        return False
+
+    coordinator = runtime.coordinator
+    identifier_prefix = f"{coordinator.modem_id}:sim:"
+    sim_id = next(
+        (
+            identifier.removeprefix(identifier_prefix)
+            for domain, identifier in device_entry.identifiers
+            if domain == DOMAIN and identifier.startswith(identifier_prefix)
+        ),
+        None,
+    )
+    if not sim_id or coordinator.is_active(sim_id):
+        return False
+
+    await coordinator.async_forget_profiles([sim_id])
+    entity_registry = er.async_get(hass)
+    for entity in list(
+        er.async_entries_for_config_entry(entity_registry, config_entry.entry_id)
+    ):
+        if f":{sim_id}:" in entity.unique_id:
+            entity_registry.async_remove(entity.entity_id)
+    return True
 
 
 async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:

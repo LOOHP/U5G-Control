@@ -16,6 +16,8 @@ from custom_components.u5g_control.policy import (
     PolicyError,
     build_preference,
     infer_mode_flags,
+    initial_sim_radio_state,
+    should_apply_sim_profile,
     with_band,
 )
 
@@ -32,6 +34,62 @@ def profile() -> SimProfile:
 
 
 class PolicyTests(unittest.TestCase):
+    def test_new_sim_uses_baseline_not_previous_live_masks(self) -> None:
+        baseline = RadioPreference(
+            mode="5gnr,lte",
+            lte_bands={1, 3, 20},
+            sa_bands={1, 28, 78, 79},
+            nsa_bands={1, 78, 79},
+        )
+        state = initial_sim_radio_state(
+            baseline, 79, 79, {1, 28, 78}, {1, 78}
+        )
+        self.assertEqual(
+            state,
+            (True, True, {1, 3, 20}, {1, 28, 78}, {1, 78}),
+        )
+
+    def test_disabled_baseline_architecture_seeds_recoverable_bands(self) -> None:
+        baseline = RadioPreference(
+            mode="5gnr,lte",
+            lte_bands={3, 20},
+            sa_bands={79},
+            nsa_bands={1, 78},
+        )
+        state = initial_sim_radio_state(
+            baseline, 79, 79, {1, 28, 78}, {1, 78}
+        )
+        self.assertEqual(
+            state,
+            (False, True, {3, 20}, {1, 28, 78}, {1, 78}),
+        )
+
+    def test_profile_is_applied_on_new_or_changed_sim(self) -> None:
+        self.assertTrue(
+            should_apply_sim_profile(
+                is_new=True,
+                previous_sim_id="sim-a",
+                current_sim_id="sim-b",
+                auto_reapply=False,
+            )
+        )
+        self.assertTrue(
+            should_apply_sim_profile(
+                is_new=False,
+                previous_sim_id="sim-a",
+                current_sim_id="sim-b",
+                auto_reapply=False,
+            )
+        )
+        self.assertFalse(
+            should_apply_sim_profile(
+                is_new=False,
+                previous_sim_id="sim-a",
+                current_sim_id="sim-a",
+                auto_reapply=False,
+            )
+        )
+
     def test_band_parser_and_formatter(self) -> None:
         self.assertEqual(parse_band_list("78,1, 7"), {1, 7, 78})
         self.assertEqual(format_band_list({78, 1, 7}), "1,7,78")
