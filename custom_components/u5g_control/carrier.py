@@ -5,8 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-_BANDWIDTH_KEYS = (
-    # Prefer downlink width when firmware reports separate directions.
+_DOWNLINK_BANDWIDTH_KEYS = (
     "dlbwmhz",
     "dlbandwidthmhz",
     "dlbandwidth",
@@ -24,11 +23,19 @@ _BANDWIDTH_KEYS = (
     "rxbw",
     "width",
     "bw",
-    # Uplink is a final fallback when no downlink/general width is present.
+)
+
+_UPLINK_BANDWIDTH_KEYS = (
     "ulbwmhz",
     "ulbandwidthmhz",
     "ulbandwidth",
     "ulbw",
+    "ulchannelbandwidth",
+    "uplinkbandwidth",
+    "bandwidthul",
+    "transmitbandwidth",
+    "txbandwidth",
+    "txbw",
 )
 
 
@@ -61,15 +68,17 @@ def _as_mhz(value: Any, normalized_key: str) -> int | float | None:
     return int(number) if number.is_integer() else number
 
 
-def carrier_width_mhz(carrier: dict[str, Any] | None) -> int | float | None:
-    """Read a carrier width in MHz across known firmware payload variants."""
+def _carrier_width_mhz(
+    carrier: dict[str, Any] | None, keys: tuple[str, ...]
+) -> int | float | None:
+    """Read one directional carrier width across firmware variants."""
     if carrier is None:
         return None
 
     normalized_values = {
         _normalized_key(key): value for key, value in carrier.items()
     }
-    for normalized_key in _BANDWIDTH_KEYS:
+    for normalized_key in keys:
         if normalized_key in normalized_values:
             result = _as_mhz(normalized_values[normalized_key], normalized_key)
             if result is not None:
@@ -77,13 +86,32 @@ def carrier_width_mhz(carrier: dict[str, Any] | None) -> int | float | None:
 
     for value in carrier.values():
         if isinstance(value, dict):
-            result = carrier_width_mhz(value)
+            result = _carrier_width_mhz(value, keys)
             if result is not None:
                 return result
         elif isinstance(value, list):
             for item in value:
                 if isinstance(item, dict):
-                    result = carrier_width_mhz(item)
+                    result = _carrier_width_mhz(item, keys)
                     if result is not None:
                         return result
     return None
+
+
+def carrier_downlink_width_mhz(
+    carrier: dict[str, Any] | None,
+) -> int | float | None:
+    """Read a carrier's download width in MHz."""
+    return _carrier_width_mhz(carrier, _DOWNLINK_BANDWIDTH_KEYS)
+
+
+def carrier_uplink_width_mhz(
+    carrier: dict[str, Any] | None,
+) -> int | float | None:
+    """Read a carrier's upload width in MHz when explicitly reported."""
+    return _carrier_width_mhz(carrier, _UPLINK_BANDWIDTH_KEYS)
+
+
+def carrier_width_mhz(carrier: dict[str, Any] | None) -> int | float | None:
+    """Return the download width for backward-compatible callers."""
+    return carrier_downlink_width_mhz(carrier)

@@ -9,6 +9,7 @@ from typing import Any
 
 import asyncssh
 
+from .at_status import merge_sierra_lteinfo, merge_sierra_nrinfo
 from .const import MODEM_COMMAND_TIMEOUT
 from .models import ModemSnapshot, RadioPreference
 
@@ -171,6 +172,29 @@ class U5GClient:
         sim_state = await self.async_uiwwand("get-sim-state")
         preference_data = await self.async_uiwwand("get-radio-pref")
         radio_status = await self.async_uiwwand("get-radio-status")
+        active_rat = str(
+            radio_status.get("rat-mode-active", radio_status.get("mode", ""))
+        ).casefold()
+        if "5g" in active_rat or radio_status.get("ca-nr"):
+            try:
+                nr_info = await self.async_run("uiwwand-chat -A 'AT!NRINFO?'")
+            except U5GAuthenticationError:
+                raise
+            except U5GApiError:
+                # The AT helper and command are optional across U5G firmware
+                # families. Core polling must continue if either is absent.
+                pass
+            else:
+                merge_sierra_nrinfo(radio_status, nr_info)
+        if radio_status.get("ca-lte"):
+            try:
+                lte_info = await self.async_run("uiwwand-chat -A 'AT!LTEINFO?'")
+            except U5GAuthenticationError:
+                raise
+            except U5GApiError:
+                pass
+            else:
+                merge_sierra_lteinfo(radio_status, lte_info)
         info = await self.async_get_info() if include_info else {}
         return ModemSnapshot(
             sim_state=sim_state,

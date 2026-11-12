@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import unittest
 
-from custom_components.u5g_control.carrier import carrier_width_mhz
+from custom_components.u5g_control.carrier import (
+    carrier_downlink_width_mhz,
+    carrier_uplink_width_mhz,
+    carrier_width_mhz,
+)
 
 
 class CarrierWidthTests(unittest.TestCase):
@@ -43,6 +47,10 @@ class CarrierWidthTests(unittest.TestCase):
 
         self.assertEqual(carrier_width_mhz(lte), 15)
         self.assertEqual(carrier_width_mhz(nr), 40)
+        self.assertEqual(carrier_downlink_width_mhz(lte), 15)
+        self.assertEqual(carrier_uplink_width_mhz(lte), 10)
+        self.assertEqual(carrier_downlink_width_mhz(nr), 40)
+        self.assertEqual(carrier_uplink_width_mhz(nr), 30)
 
     def test_downlink_is_preferred_regardless_of_key_order(self) -> None:
         carrier = {"ul-bw-mhz": 10.0, "dl-bw-mhz": 15.0}
@@ -55,3 +63,7 @@ class CarrierWidthTests(unittest.TestCase):
 
     def test_missing_bandwidth(self) -> None:
         self.assertIsNone(carrier_width_mhz({"band": 3, "arfcn": 1300}))
+
+    def test_uplink_requires_an_explicit_uplink_value(self) -> None:
+        self.assertIsNone(carrier_uplink_width_mhz({"bandwidth": "20 MHz"}))
+        self.assertEqual(carrier_uplink_width_mhz({"tx_bw": "10 MHz"}), 10)

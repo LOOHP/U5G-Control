@@ -4,7 +4,7 @@ An experimental Home Assistant custom integration for controlling radio modes an
 
 ## What it creates
 
-Each configured physical modem is represented as a Home Assistant hub device. Every SIM observed in that modem becomes a persistent child device named from its SPN and the last four ICCID digits, for example `O2 [5244]`. Removing a SIM makes its entities unavailable without deleting its saved profile; reinserting it reactivates the same device.
+Each configured physical modem is represented as a Home Assistant hub device. Every SIM observed in that modem becomes a persistent child device named from its SPN and the last four ICCID digits, for example `O2 [5244]`. Removing a SIM makes its entities unavailable without deleting its saved profile, reinserting it reactivates the same device.
 
 Radio preferences are isolated per SIM. Inserting a remembered SIM restores its saved policy. A newly observed SIM starts from the modem baseline captured before the integration's first managed write instead of inheriting the previously inserted SIM's masks.
 
@@ -12,10 +12,14 @@ Each supported SIM child exposes:
 
 - **Enable 5G SA** and **Enable 5G NSA** switches.
 - Separate switches for the LTE, SA, and NSA bands selected during setup.
-- Actual SA/NSA activity binary sensors.
-- Carrier, current mode, primary band, RSRP, RSRQ, and SINR sensors.
+- Carrier, mode, primary band, RSRP, RSRQ, and SINR sensors.
 - Up to three LTE and three 5G component-carrier sensors. Each carrier's band is the state and every statistic reported by the modem is exposed as an attribute. Unused carriers report `Not connected`.
-- A channel-width sensor for every component carrier, normalized to MHz when the firmware reports bandwidth.
+- Separate download-bandwidth and upload-bandwidth sensors for every component carrier, normalized to MHz when the firmware reports bandwidth.
+- Per-carrier LTE and NR RSSI sensors on Sierra Wireless EM9 modems. NR receive paths and their average are available as attributes when the modem reports them.
+- Separate LTE and 5G RSRP, RSRQ, and SINR sensors.
+- LTE measurements are suppressed in 5G SA, where the modem mirrors NR values into its generic fields, SINR values are rounded to one decimal place.
+- LTE and 5G signal sensors report `Not connected` instead of `Unknown` when their radio is inactive.
+- One per-SIM Mode sensor (`5G SA`, `5G NSA`, `5G`, `LTE`, or `Not connected`) in place of separate SA/NSA active binary sensors.
 - Restore default and restore previous configuration buttons.
 
 The four mode combinations map to:
@@ -41,7 +45,7 @@ When SA or NSA is disabled, the integration preserves the user's selected bands 
 6. Choose an unused NR band for the disabled-mode placeholder from the modem-populated `n1`, `n3`, etc. dropdown.
 7. Choose which LTE, SA, and NSA bands should be exposed as switches. No switches are selected by default, and the placeholder band is excluded from the NR lists.
 
-For the broadest band list in the setup screen, restore the modem's automatic radio preferences before adding the integration. The modem reports its current masks rather than a guaranteed immutable capability list; a modem already locked to one band may therefore initially expose only that band. The list can be expanded later through **Configure** after restoring automatic preferences.
+For the broadest band list in the setup screen, restore the modem's automatic radio preferences before adding the integration. The modem reports its current masks rather than a guaranteed immutable capability list, a modem already locked to one band may therefore initially expose only that band. The list can be expanded later through **Configure** after restoring automatic preferences.
 
 ### HACS custom repository
 
@@ -63,7 +67,7 @@ Open the integration entry and select **Configure** to:
 - Enable automatic policy reapplication after UniFi configuration drift.
 - Forget inactive SIM profiles.
 
-Inactive SIMs can also be deleted directly from their Home Assistant device page. The active SIM and modem hub cannot be deleted this way. Forgetting a SIM removes only its Home Assistant profile; reinserting it creates a fresh child device.
+Inactive SIMs can also be deleted directly from their Home Assistant device page. The active SIM and modem hub cannot be deleted this way. Forgetting a SIM removes only its Home Assistant profile, reinserting it creates a fresh child device.
 
 ## Important limitations
 

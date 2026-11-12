@@ -6,7 +6,7 @@ from datetime import timedelta
 
 DOMAIN = "u5g_control"
 NAME = "U5G Control"
-VERSION = "0.1.18"
+VERSION = "0.1.27"
 
 PLATFORMS = ["sensor", "binary_sensor", "switch", "button"]
 

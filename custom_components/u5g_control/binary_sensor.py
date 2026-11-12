@@ -10,7 +10,6 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import U5GRuntimeData
 from .coordinator import U5GCoordinator
 from .entity import U5GSimEntity
-from .radio_status import nsa_is_active, sa_is_active
 
 
 class U5GSimActiveBinarySensor(U5GSimEntity, BinarySensorEntity):
@@ -31,23 +30,6 @@ class U5GSimActiveBinarySensor(U5GSimEntity, BinarySensorEntity):
         return self.coordinator.is_active(self.sim_id)
 
 
-class U5GArchitectureActiveBinarySensor(U5GSimEntity, BinarySensorEntity):
-    """Report whether SA or NSA is actually active, not merely allowed."""
-
-    def __init__(self, coordinator: U5GCoordinator, sim_id: str, architecture: str) -> None:
-        super().__init__(coordinator, sim_id, f"binary_sensor:{architecture}_active")
-        self.architecture = architecture
-        self._attr_name = f"5G {architecture.upper()} active"
-        self._attr_icon = "mdi:signal-5g"
-
-    @property
-    def is_on(self) -> bool:
-        status = self.coordinator.data.radio_status if self.coordinator.data else {}
-        if self.architecture == "sa":
-            return sa_is_active(status)
-        return nsa_is_active(status)
-
-
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry[U5GRuntimeData],
@@ -64,15 +46,7 @@ async def async_setup_entry(
         for sim_id in new:
             known.add(sim_id)
         async_add_entities(
-            [
-                entity
-                for sim_id in new
-                for entity in (
-                    U5GSimActiveBinarySensor(coordinator, sim_id),
-                    U5GArchitectureActiveBinarySensor(coordinator, sim_id, "sa"),
-                    U5GArchitectureActiveBinarySensor(coordinator, sim_id, "nsa"),
-                )
-            ]
+            [U5GSimActiveBinarySensor(coordinator, sim_id) for sim_id in new]
         )
 
     add_new_sims()

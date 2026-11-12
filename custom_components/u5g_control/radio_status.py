@@ -46,7 +46,7 @@ def current_mode(status: dict[str, Any]) -> str:
         return "5G"
     if has_lte:
         return "LTE"
-    return raw_mode or "Unknown"
+    return raw_mode or "Not connected"
 
 
 def sa_is_active(status: dict[str, Any]) -> bool:
@@ -57,3 +57,24 @@ def sa_is_active(status: dict[str, Any]) -> bool:
 def nsa_is_active(status: dict[str, Any]) -> bool:
     """Return whether 5G non-standalone is currently active."""
     return current_mode(status) == "5G NSA"
+
+
+def lte_measurement(status: dict[str, Any], key: str) -> Any:
+    """Return a generic radio measurement only when LTE is active.
+
+    U5G firmware mirrors NR measurements into the generic fields during SA,
+    so those fields cannot be treated as LTE values in standalone mode.
+    """
+    mode = current_mode(status)
+    if mode == "5G SA" or mode == "Not connected":
+        return None
+    if mode in {"LTE", "5G NSA"} or bool(status.get("ca-lte")):
+        return status.get(key)
+    return None
+
+
+def rounded_measurement(value: Any, digits: int = 1) -> Any:
+    """Round a numeric radio measurement without changing missing values."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return round(value, digits)
+    return value

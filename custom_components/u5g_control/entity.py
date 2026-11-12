@@ -8,6 +8,7 @@ from homeassistant.util import slugify
 
 from .const import DOMAIN
 from .coordinator import U5GCoordinator
+from .entity_ids import suggested_entity_suffix
 
 
 def hub_device_info(coordinator: U5GCoordinator) -> DeviceInfo:
@@ -61,9 +62,9 @@ class U5GSimEntity(CoordinatorEntity[U5GCoordinator]):
             or coordinator.modem_id
         )
         sim_name = coordinator.profile(sim_id).name
-        entity_suffix = suffix.partition(":")[2] or suffix
+        entity_suffix = suggested_entity_suffix(suffix)
         self._attr_suggested_object_id = slugify(
-            f"{hub_name}_{sim_name}_{entity_suffix.replace(':', '_')}"
+            f"{hub_name}_{sim_name}_{entity_suffix}"
         )
 
     @property
