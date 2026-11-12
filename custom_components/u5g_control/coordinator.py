@@ -26,6 +26,7 @@ from .const import (
     DEFAULT_DISABLED_BAND,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    MODE_LTE,
     STORE_KEY_PREFIX,
     STORE_VERSION,
 )
@@ -276,7 +277,15 @@ class U5GCoordinator(DataUpdateCoordinator[ModemSnapshot]):
             raise HomeAssistantError("Unknown radio architecture")
         profile = self.profile(sim_id)
         changed = replace(profile, **{f"{architecture}_enabled": enabled})
-        await self._async_apply_profile(changed)
+        refresh_registration = (
+            architecture == "sa"
+            and enabled
+            and not profile.sa_enabled
+            and profile.nsa_enabled
+        )
+        await self._async_apply_profile(
+            changed, refresh_registration=refresh_registration
+        )
 
     async def async_set_band(
         self, sim_id: str, architecture: str, band: int, enabled: bool
@@ -294,7 +303,12 @@ class U5GCoordinator(DataUpdateCoordinator[ModemSnapshot]):
             raise HomeAssistantError(str(err)) from err
         await self._async_apply_profile(changed)
 
-    async def _async_apply_profile(self, changed: SimProfile) -> None:
+    async def _async_apply_profile(
+        self,
+        changed: SimProfile,
+        *,
+        refresh_registration: bool = False,
+    ) -> None:
         async with self._write_lock:
             try:
                 preference = build_preference(changed, self.disabled_band)
@@ -304,6 +318,7 @@ class U5GCoordinator(DataUpdateCoordinator[ModemSnapshot]):
             old_profile = self.profile(changed.sim_id)
             self.profiles[changed.sim_id] = changed
             self.async_update_listeners()
+            parked_preference = None
             try:
                 current = await self.client.async_get_snapshot()
                 changed.last_good_preference = self._copy_preference(
@@ -314,11 +329,37 @@ class U5GCoordinator(DataUpdateCoordinator[ModemSnapshot]):
                         old_profile, current.radio_preference
                     )
                 )
+                if refresh_registration:
+                    parked_preference = replace(
+                        preference,
+                        mode=MODE_LTE,
+                        sa_bands={self.disabled_band},
+                        nsa_bands={self.disabled_band},
+                    )
+                    await self.client.async_set_preference(
+                        changed.iccid, parked_preference
+                    )
+                    # uiwwand acknowledges before registration state has fully
+                    # settled. Give the modem a moment to leave the old NSA
+                    # session before restoring the requested complete policy.
+                    await asyncio.sleep(1)
                 await self.client.async_set_preference(changed.iccid, preference)
-            except U5GApiError as err:
+            except BaseException as err:
+                if parked_preference is not None:
+                    try:
+                        await self.client.async_set_preference(
+                            changed.iccid, current.radio_preference
+                        )
+                    except U5GApiError:
+                        _LOGGER.exception(
+                            "Unable to restore radio preference after failed "
+                            "SA registration refresh"
+                        )
                 self.profiles[changed.sim_id] = old_profile
                 self.async_update_listeners()
-                raise HomeAssistantError(str(err)) from err
+                if isinstance(err, U5GApiError):
+                    raise HomeAssistantError(str(err)) from err
+                raise
             changed.current_preference = self._copy_preference(preference)
             changed.current_preference_placeholder = self.disabled_band
             await self._async_save()
