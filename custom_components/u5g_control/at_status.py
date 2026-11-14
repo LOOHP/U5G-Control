@@ -86,7 +86,14 @@ def parse_sierra_nrinfo(output: str) -> list[dict[str, Any]]:
 def merge_sierra_nrinfo(
     radio_status: dict[str, Any], output: str
 ) -> dict[str, Any]:
-    """Merge Sierra NR diagnostics into uiwwand component carriers."""
+    """Merge Sierra NR diagnostics into uiwwand component carriers.
+
+    ``get-radio-status`` is read before ``AT!NRINFO?``. Carrier aggregation
+    can change between those commands, so the later AT response is
+    authoritative for membership. Earlier uiwwand records enrich matching AT
+    carriers only; retaining unmatched records can create a carrier set which
+    never existed at one instant.
+    """
     diagnostics = parse_sierra_nrinfo(output)
     if not diagnostics:
         return radio_status
@@ -123,7 +130,6 @@ def merge_sierra_nrinfo(
             used.add(match_index)
             merged.append({**existing[match_index], **diagnostic})
 
-    merged.extend(carrier for index, carrier in enumerate(existing) if index not in used)
     radio_status["ca-nr"] = merged
     return radio_status
 

@@ -94,6 +94,22 @@ class SierraNrInfoTests(unittest.TestCase):
         merge_sierra_nrinfo(status, NRINFO)
         self.assertEqual([item["band"] for item in status["ca-nr"]], [1, 78])
 
+    def test_drops_stale_uiwwand_carriers_after_nr_changes(self) -> None:
+        status = {
+            "ca-nr": [
+                {"primary": True, "band": 78, "dl-arfcn": 637334},
+                {"primary": False, "band": 78, "dl-arfcn": 646666},
+            ]
+        }
+
+        merge_sierra_nrinfo(status, NRINFO)
+
+        self.assertEqual(
+            [(item["band"], item["dl-arfcn"]) for item in status["ca-nr"]],
+            [(1, 431940), (78, 637334)],
+        )
+        self.assertNotIn(646666, [item["dl-arfcn"] for item in status["ca-nr"]])
+
     def test_not_available_is_empty(self) -> None:
         self.assertEqual(parse_sierra_nrinfo("!NRINFO: Not Available\nOK"), [])
 

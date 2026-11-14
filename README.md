@@ -6,6 +6,8 @@ An experimental Home Assistant custom integration for controlling radio modes an
 
 Each configured physical modem is represented as a Home Assistant hub device. Every SIM observed in that modem becomes a persistent child device named from its SPN and the last four ICCID digits, for example `O2 [5244]`. Removing a SIM makes its entities unavailable without deleting its saved profile, reinserting it reactivates the same device.
 
+The modem's normalized network MAC address is registered as a Home Assistant device connection, allowing the device registry to associate it with the same physical modem discovered by another integration such as UniFi.
+
 The modem hub exposes a Primary SIM select when SIMs have been observed in both physical slots. Changing it updates the preferred slot, waits for that SIM to become ready, and then restores its saved radio policy. A separate Active SIM sensor reports the SIM actually in use, which may differ from the primary during automatic failover.
 
 The modem hub also exposes mirrors of every per-SIM statistics sensor, including roaming, signal measurements, and component carriers. These hub entities automatically follow the currently active SIM, making dashboards and automations independent of SIM failover. The per-SIM Active binary sensor is intentionally not mirrored because the hub already exposes the Active SIM sensor.
@@ -23,6 +25,7 @@ Each supported SIM child exposes:
 - Up to three LTE and three 5G component-carrier sensors. Each carrier's band is the state and every statistic reported by the modem is exposed as an attribute. Unused carriers report `Not connected`.
 - Separate download-bandwidth and upload-bandwidth sensors for every component carrier, normalized to MHz when the firmware reports bandwidth.
 - Per-carrier LTE and NR RSSI sensors on Sierra Wireless EM9 modems. NR receive paths and their average are available as attributes when the modem reports them.
+- NR carrier membership follows the later `AT!NRINFO?` snapshot, preventing stale `get-radio-status` records from briefly creating a carrier combination which never existed at one instant.
 - Separate LTE and 5G RSRP, RSRQ, and SINR sensors.
 - LTE measurements are suppressed in 5G SA, where the modem mirrors NR values into its generic fields, SINR values are rounded to one decimal place.
 - LTE and 5G signal sensors report `Not connected` instead of `Unknown` when their radio is inactive.

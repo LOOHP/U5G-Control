@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.device_registry import (
+    CONNECTION_NETWORK_MAC,
+    DeviceInfo,
+    format_mac,
+)
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
 
@@ -14,8 +18,12 @@ from .entity_ids import suggested_entity_suffix
 def hub_device_info(coordinator: U5GCoordinator) -> DeviceInfo:
     """Return the physical modem hub device."""
     info = coordinator.modem_info
+    mac = str(info.get("mac", "")).strip()
     return DeviceInfo(
         identifiers={(DOMAIN, coordinator.modem_id)},
+        connections=(
+            {(CONNECTION_NETWORK_MAC, format_mac(mac))} if mac else set()
+        ),
         manufacturer="Ubiquiti",
         model=info.get("model", "U5G-class Cellular Modem"),
         name=info.get("hostname", "U5G Cellular Modem"),
