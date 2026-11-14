@@ -78,3 +78,74 @@ def rounded_measurement(value: Any, digits: int = 1) -> Any:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return round(value, digits)
     return value
+
+
+def signal_quality_percentage(status: dict[str, Any]) -> int | None:
+    """Calculate composite signal quality using the active radio measurements.
+
+    This follows NetworkOptimizer's calculation: RSRP contributes 50%, SINR
+    30%, and RSRQ 20%. NR measurements take priority whenever they are
+    available; otherwise the active LTE measurements are used. Missing metrics
+    are omitted and the remaining weights are normalized.
+    """
+    mode = current_mode(status)
+    nr_rsrp = status.get("rsrp-nr")
+    use_nr = _is_number(nr_rsrp)
+
+    if use_nr:
+        rsrp = nr_rsrp
+        rsrq = status.get("rsrq-nr")
+        sinr = status.get("snr-nr")
+    elif mode == "5G SA":
+        # Some firmware reports SA measurements only in the generic fields.
+        rsrp = status.get("rsrp")
+        rsrq = status.get("rsrq")
+        sinr = status.get("snr")
+        use_nr = _is_number(rsrp)
+    else:
+        rsrp = lte_measurement(status, "rsrp")
+        rsrq = lte_measurement(status, "rsrq")
+        sinr = lte_measurement(status, "snr")
+
+    weighted_score = 0.0
+    total_weight = 0.0
+
+    if _is_number(rsrp):
+        floor = -110 if use_nr else -120
+        score = _clamp((float(rsrp) - floor) * (100.0 / 30.0))
+        weighted_score += score * 0.5
+        total_weight += 0.5
+
+    if _is_number(sinr):
+        score = _clamp(float(sinr) * (100.0 / 30.0))
+        weighted_score += score * 0.3
+        total_weight += 0.3
+
+    if _is_number(rsrq):
+        score = _clamp((float(rsrq) + 20) * (100.0 / 17.0))
+        weighted_score += score * 0.2
+        total_weight += 0.2
+
+    if total_weight == 0:
+        return None
+    return int(weighted_score / total_weight)
+
+
+def _is_number(value: Any) -> bool:
+    """Return whether a value is a usable numeric radio measurement."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _clamp(value: float) -> float:
+    """Clamp one calculated score to the percentage range."""
+    return max(0.0, min(100.0, value))
+
+
+def roaming_is_active(status: dict[str, Any]) -> bool | None:
+    """Return roaming status, or None when the radio is disconnected."""
+    if current_mode(status) == "Not connected" or "roaming" not in status:
+        return None
+    value = _optional_bool(status.get("roaming"))
+    if value is None and isinstance(status.get("roaming"), int):
+        value = bool(status["roaming"])
+    return value

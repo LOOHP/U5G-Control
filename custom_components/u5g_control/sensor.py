@@ -7,7 +7,7 @@ from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import SIGNAL_STRENGTH_DECIBELS_MILLIWATT
+from homeassistant.const import PERCENTAGE, SIGNAL_STRENGTH_DECIBELS_MILLIWATT
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -15,11 +15,21 @@ from . import U5GRuntimeData
 from .carrier import carrier_downlink_width_mhz, carrier_uplink_width_mhz
 from .coordinator import U5GCoordinator
 from .entity import U5GHubEntity, U5GSimEntity
-from .radio_status import current_mode, lte_measurement, rounded_measurement
+from .radio_status import (
+    current_mode,
+    lte_measurement,
+    rounded_measurement,
+    signal_quality_percentage,
+)
 
 
 def _status(coordinator: U5GCoordinator) -> dict[str, Any]:
     return coordinator.data.radio_status if coordinator.data else {}
+
+
+def _active_status(coordinator: U5GCoordinator) -> dict[str, Any]:
+    """Return live radio status only while a SIM is active."""
+    return _status(coordinator) if coordinator.active_sim_id else {}
 
 
 def _component_carrier(
@@ -34,7 +44,7 @@ def _component_carrier(
 
 
 class U5GActiveSimSensor(U5GHubEntity, SensorEntity):
-    """Show the active SIM child."""
+    """Show the SIM which is actually active, including during failover."""
 
     _attr_name = "Active SIM"
     _attr_icon = "mdi:sim"
@@ -43,9 +53,52 @@ class U5GActiveSimSensor(U5GHubEntity, SensorEntity):
         super().__init__(coordinator, "active_sim")
 
     @property
-    def native_value(self) -> str | None:
+    def native_value(self) -> str:
         sim_id = self.coordinator.active_sim_id
-        return self.coordinator.profiles[sim_id].name if sim_id else None
+        if sim_id and sim_id in self.coordinator.profiles:
+            return self.coordinator.profiles[sim_id].name
+        return "Not connected"
+
+
+class U5GHubMirrorSensor(U5GHubEntity, SensorEntity):
+    """Mirror one live statistic from whichever SIM is currently active."""
+
+    def __init__(
+        self,
+        coordinator: U5GCoordinator,
+        key: str,
+        name: str,
+        icon: str,
+        value_fn: Callable[[dict[str, Any]], Any],
+        unit: str | None = None,
+        attributes_fn: Callable[[dict[str, Any]], dict[str, Any] | None]
+        | None = None,
+        missing_value: str = "Not connected",
+    ) -> None:
+        super().__init__(coordinator, f"sensor:{key}")
+        self._attr_name = name
+        self._attr_icon = icon
+        self._value_fn = value_fn
+        self._unit = unit
+        self._attributes_fn = attributes_fn
+        self._missing_value = missing_value
+
+    @property
+    def native_value(self) -> Any:
+        if not self.coordinator.active_sim_id:
+            return self._missing_value
+        value = self._value_fn(_active_status(self.coordinator))
+        return self._missing_value if value is None else value
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        return self._unit if isinstance(self.native_value, (int, float)) else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        if self._attributes_fn is None:
+            return None
+        return self._attributes_fn(_active_status(self.coordinator))
 
 
 class U5GModeSensor(U5GSimEntity, SensorEntity):
@@ -267,8 +320,11 @@ class U5GSimSensor(U5GSimEntity, SensorEntity):
 def _sim_sensors(coordinator: U5GCoordinator, sim_id: str) -> list[SensorEntity]:
     sensors: list[SensorEntity] = [
         U5GModeSensor(coordinator, sim_id),
-        U5GSimSensor(coordinator, sim_id, "carrier", "Carrier", "mdi:access-point-network", lambda s: s.get("registered-spn")),
+        U5GSimSensor(coordinator, sim_id, "carrier", "Carrier", "mdi:radio-tower", lambda s: s.get("registered-spn")),
         U5GSimSensor(coordinator, sim_id, "primary_band", "Primary band", "mdi:sine-wave", lambda s: s.get("band-class")),
+        U5GSimSensor(coordinator, sim_id, "signal_bars", "Signal bars", "mdi:signal", lambda s: s.get("signal-bars"), missing_value="Not connected"),
+        U5GSimSensor(coordinator, sim_id, "signal_percentage", "Signal percentage", "mdi:signal", lambda s: s.get("signal-percent"), PERCENTAGE, missing_value="Not connected"),
+        U5GSimSensor(coordinator, sim_id, "signal_quality", "Signal quality", "mdi:signal", signal_quality_percentage, PERCENTAGE, missing_value="Not connected"),
         U5GSimSensor(coordinator, sim_id, "rsrp", "5G RSRP", "mdi:signal", lambda s: s.get("rsrp-nr"), SIGNAL_STRENGTH_DECIBELS_MILLIWATT, "5g_rsrp", "Not connected"),
         U5GSimSensor(coordinator, sim_id, "rsrq", "5G RSRQ", "mdi:signal", lambda s: s.get("rsrq-nr"), "dB", "5g_rsrq", "Not connected"),
         U5GSimSensor(coordinator, sim_id, "sinr", "5G SINR", "mdi:signal", lambda s: rounded_measurement(s.get("snr-nr")), "dB", "5g_sinr", "Not connected"),
@@ -290,13 +346,136 @@ def _sim_sensors(coordinator: U5GCoordinator, sim_id: str) -> list[SensorEntity]
     return sensors
 
 
+def _carrier_state(status: dict[str, Any], technology: str, index: int) -> str | None:
+    """Return the display band for one component carrier."""
+    carrier = _component_carrier(status, technology, index)
+    if carrier is None or carrier.get("band") is None:
+        return None
+    return f"{'n' if technology == 'nr' else 'b'}{carrier['band']}"
+
+
+def _carrier_attributes(
+    status: dict[str, Any], technology: str, index: int
+) -> dict[str, Any]:
+    """Return component-carrier attributes for a hub mirror."""
+    carrier = _component_carrier(status, technology, index)
+    attributes: dict[str, Any] = {
+        "technology": "5G NR" if technology == "nr" else "LTE",
+        "carrier_number": index + 1,
+        "connected": carrier is not None,
+    }
+    if carrier is not None:
+        attributes.update(carrier)
+    return attributes
+
+
+def _carrier_width_value(
+    status: dict[str, Any], technology: str, index: int, direction: str
+) -> int | float | str | None:
+    """Return one component-carrier bandwidth for a hub mirror."""
+    carrier = _component_carrier(status, technology, index)
+    if carrier is None:
+        return None
+    value = (
+        carrier_downlink_width_mhz(carrier)
+        if direction == "download"
+        else carrier_uplink_width_mhz(carrier)
+    )
+    return value if value is not None else "Unknown"
+
+
+def _carrier_signal_value(
+    status: dict[str, Any], technology: str, index: int
+) -> int | float | str | None:
+    """Return one component-carrier RSSI for a hub mirror."""
+    carrier = _component_carrier(status, technology, index)
+    if carrier is None:
+        return None
+    value = carrier.get("rssi-dbm")
+    return value if isinstance(value, (int, float)) else "Not reported"
+
+
+def _carrier_signal_attributes(
+    status: dict[str, Any], technology: str, index: int
+) -> dict[str, Any] | None:
+    """Return per-path RSSI attributes for a hub mirror."""
+    carrier = _component_carrier(status, technology, index)
+    if carrier is None:
+        return None
+    return {
+        key: value
+        for key, value in carrier.items()
+        if key.startswith("rssi-rx") or key == "rssi-average-dbm"
+    } or None
+
+
+def _hub_sensors(coordinator: U5GCoordinator) -> list[SensorEntity]:
+    """Create modem-device sensors which follow the currently active SIM."""
+    sensors: list[SensorEntity] = [
+        U5GHubMirrorSensor(coordinator, "mode", "Mode", "mdi:signal-5g", current_mode),
+        U5GHubMirrorSensor(coordinator, "carrier", "Carrier", "mdi:radio-tower", lambda s: s.get("registered-spn")),
+        U5GHubMirrorSensor(coordinator, "primary_band", "Primary band", "mdi:sine-wave", lambda s: s.get("band-class")),
+        U5GHubMirrorSensor(coordinator, "signal_bars", "Signal bars", "mdi:signal", lambda s: s.get("signal-bars")),
+        U5GHubMirrorSensor(coordinator, "signal_percentage", "Signal percentage", "mdi:signal", lambda s: s.get("signal-percent"), PERCENTAGE),
+        U5GHubMirrorSensor(coordinator, "signal_quality", "Signal quality", "mdi:signal", signal_quality_percentage, PERCENTAGE),
+        U5GHubMirrorSensor(coordinator, "5g_rsrp", "5G RSRP", "mdi:signal", lambda s: s.get("rsrp-nr"), SIGNAL_STRENGTH_DECIBELS_MILLIWATT),
+        U5GHubMirrorSensor(coordinator, "5g_rsrq", "5G RSRQ", "mdi:signal", lambda s: s.get("rsrq-nr"), "dB"),
+        U5GHubMirrorSensor(coordinator, "5g_sinr", "5G SINR", "mdi:signal", lambda s: rounded_measurement(s.get("snr-nr")), "dB"),
+        U5GHubMirrorSensor(coordinator, "lte_rsrp", "LTE RSRP", "mdi:signal", lambda s: lte_measurement(s, "rsrp"), SIGNAL_STRENGTH_DECIBELS_MILLIWATT),
+        U5GHubMirrorSensor(coordinator, "lte_rsrq", "LTE RSRQ", "mdi:signal", lambda s: lte_measurement(s, "rsrq"), "dB"),
+        U5GHubMirrorSensor(coordinator, "lte_sinr", "LTE SINR", "mdi:signal", lambda s: rounded_measurement(lte_measurement(s, "snr")), "dB"),
+    ]
+    for technology in ("lte", "nr"):
+        label = "5G" if technology == "nr" else "LTE"
+        for index in range(3):
+            number = index + 1
+            sensors.extend(
+                (
+                    U5GHubMirrorSensor(
+                        coordinator,
+                        f"{technology}_carrier_{number}",
+                        f"{label} carrier {number}",
+                        "mdi:access-point-network",
+                        lambda s, t=technology, i=index: _carrier_state(s, t, i),
+                        attributes_fn=lambda s, t=technology, i=index: _carrier_attributes(s, t, i),
+                    ),
+                    U5GHubMirrorSensor(
+                        coordinator,
+                        f"{technology}_carrier_{number}_download_bandwidth",
+                        f"{label} carrier {number} download bandwidth",
+                        "mdi:arrow-expand-horizontal",
+                        lambda s, t=technology, i=index: _carrier_width_value(s, t, i, "download"),
+                        "MHz",
+                    ),
+                    U5GHubMirrorSensor(
+                        coordinator,
+                        f"{technology}_carrier_{number}_upload_bandwidth",
+                        f"{label} carrier {number} upload bandwidth",
+                        "mdi:arrow-expand-horizontal",
+                        lambda s, t=technology, i=index: _carrier_width_value(s, t, i, "upload"),
+                        "MHz",
+                    ),
+                    U5GHubMirrorSensor(
+                        coordinator,
+                        f"{technology}_carrier_{number}_rssi",
+                        f"{label} carrier {number} RSSI",
+                        "mdi:signal",
+                        lambda s, t=technology, i=index: _carrier_signal_value(s, t, i),
+                        SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+                        lambda s, t=technology, i=index: _carrier_signal_attributes(s, t, i),
+                    ),
+                )
+            )
+    return sensors
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry[U5GRuntimeData],
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = entry.runtime_data.coordinator
-    async_add_entities([U5GActiveSimSensor(coordinator)])
+    async_add_entities([U5GActiveSimSensor(coordinator), *_hub_sensors(coordinator)])
     known: set[str] = set()
 
     @callback

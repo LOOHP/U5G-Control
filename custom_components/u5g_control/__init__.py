@@ -45,7 +45,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         await coordinator.async_load()
         await coordinator.async_config_entry_first_refresh()
-        _async_remove_retired_mode_entities(hass, entry)
+        _async_remove_retired_entities(hass, entry)
 
         entry.runtime_data = U5GRuntimeData(client, coordinator)
         entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
@@ -58,14 +58,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-def _async_remove_retired_mode_entities(
+def _async_remove_retired_entities(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> None:
-    """Remove mode entities replaced by the per-SIM Mode sensor."""
+    """Remove registry entries superseded by newer entities."""
     retired_suffixes = (
         ":hub:connection_mode",
         ":binary_sensor:sa_active",
         ":binary_sensor:nsa_active",
+        ":sensor:roaming",
     )
     registry = er.async_get(hass)
     for entity in list(er.async_entries_for_config_entry(registry, entry.entry_id)):

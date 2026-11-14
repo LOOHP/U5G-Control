@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
@@ -35,6 +36,7 @@ async def async_get_config_entry_diagnostics(
         "modem": deepcopy(coordinator.modem_info),
         "active_sim_id": coordinator.active_sim_id,
         "radio_preference": snapshot.radio_preference.to_dict() if snapshot else None,
+        "sim_config": deepcopy(snapshot.sim_config) if snapshot else None,
         "radio_status": redact_diagnostics(snapshot.radio_status) if snapshot else None,
         "profiles": profiles,
         "options": {

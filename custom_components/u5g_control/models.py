@@ -191,5 +191,6 @@ class ModemSnapshot:
     sim_state: dict[str, Any]
     radio_preference: RadioPreference
     radio_status: dict[str, Any]
+    sim_config: dict[str, Any] = field(default_factory=dict)
     modem_info: dict[str, str] = field(default_factory=dict)
 

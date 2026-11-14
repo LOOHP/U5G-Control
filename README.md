@@ -6,6 +6,10 @@ An experimental Home Assistant custom integration for controlling radio modes an
 
 Each configured physical modem is represented as a Home Assistant hub device. Every SIM observed in that modem becomes a persistent child device named from its SPN and the last four ICCID digits, for example `O2 [5244]`. Removing a SIM makes its entities unavailable without deleting its saved profile, reinserting it reactivates the same device.
 
+The modem hub exposes a Primary SIM select when SIMs have been observed in both physical slots. Changing it updates the preferred slot, waits for that SIM to become ready, and then restores its saved radio policy. A separate Active SIM sensor reports the SIM actually in use, which may differ from the primary during automatic failover.
+
+The modem hub also exposes mirrors of every per-SIM statistics sensor, including roaming, signal measurements, and component carriers. These hub entities automatically follow the currently active SIM, making dashboards and automations independent of SIM failover. The per-SIM Active binary sensor is intentionally not mirrored because the hub already exposes the Active SIM sensor.
+
 Radio preferences are isolated per SIM. Inserting a remembered SIM restores its saved policy. A newly observed SIM starts from the modem baseline captured before the integration's first managed write instead of inheriting the previously inserted SIM's masks.
 
 Each supported SIM child exposes:
@@ -13,6 +17,9 @@ Each supported SIM child exposes:
 - **Enable 5G SA** and **Enable 5G NSA** switches.
 - Separate switches for the LTE, SA, and NSA bands selected during setup.
 - Carrier, mode, primary band, RSRP, RSRQ, and SINR sensors.
+- Overall signal-bars and signal-percentage sensors using the modem's reported values.
+- A calculated signal-quality sensor (0–100%) weighted from the active radio's RSRP (50%), SINR (30%), and RSRQ (20%), preferring 5G measurements when NR is connected.
+- A roaming binary sensor which is on while roaming, off on the home network, and unavailable while disconnected.
 - Up to three LTE and three 5G component-carrier sensors. Each carrier's band is the state and every statistic reported by the modem is exposed as an attribute. Unused carriers report `Not connected`.
 - Separate download-bandwidth and upload-bandwidth sensors for every component carrier, normalized to MHz when the firmware reports bandwidth.
 - Per-carrier LTE and NR RSSI sensors on Sierra Wireless EM9 modems. NR receive paths and their average are available as attributes when the modem reports them.

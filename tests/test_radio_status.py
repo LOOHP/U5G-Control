@@ -8,8 +8,10 @@ from custom_components.u5g_control.radio_status import (
     current_mode,
     lte_measurement,
     nsa_is_active,
+    roaming_is_active,
     rounded_measurement,
     sa_is_active,
+    signal_quality_percentage,
 )
 
 
@@ -78,6 +80,55 @@ class RadioStatusTests(unittest.TestCase):
         self.assertEqual(rounded_measurement(3.64), 3.6)
         self.assertEqual(rounded_measurement(-0.30000001192092896), -0.3)
         self.assertIsNone(rounded_measurement(None))
+
+    def test_roaming_formats(self) -> None:
+        connected = {"rat-mode-active": "LTE"}
+        for value in (True, "true", "TRUE", 1):
+            with self.subTest(value=value):
+                self.assertIs(roaming_is_active({**connected, "roaming": value}), True)
+        for value in (False, "false", "FALSE", 0):
+            with self.subTest(value=value):
+                self.assertIs(roaming_is_active({**connected, "roaming": value}), False)
+        self.assertIsNone(roaming_is_active({}))
+
+    def test_signal_quality_prefers_nr_in_nsa(self) -> None:
+        status = {
+            "rat-mode-active": "5G",
+            "5g-sa-mode": False,
+            "rsrp": -67,
+            "rsrq": -13,
+            "snr": 8.0,
+            "rsrp-nr": -79,
+            "rsrq-nr": -12,
+            "snr-nr": 3.6,
+        }
+        self.assertEqual(signal_quality_percentage(status), 63)
+
+    def test_signal_quality_uses_lte_when_nr_is_absent(self) -> None:
+        status = {
+            "rat-mode-active": "LTE",
+            "rsrp": -90,
+            "rsrq": -10,
+            "snr": 15,
+        }
+        self.assertEqual(signal_quality_percentage(status), 76)
+
+    def test_signal_quality_uses_generic_sa_fallback(self) -> None:
+        status = {
+            "rat-mode-active": "5G",
+            "5g-sa-mode": True,
+            "rsrp": -82,
+            "rsrq": -15,
+            "snr": -2.0,
+        }
+        self.assertEqual(signal_quality_percentage(status), 52)
+
+    def test_signal_quality_normalizes_missing_metrics(self) -> None:
+        self.assertEqual(
+            signal_quality_percentage({"rat-mode-active": "LTE", "rsrp": -105}),
+            50,
+        )
+        self.assertIsNone(signal_quality_percentage({}))
 
 
 if __name__ == "__main__":

@@ -519,6 +519,59 @@ class U5GCoordinator(DataUpdateCoordinator[ModemSnapshot]):
             await self._async_save()
         await self.async_request_refresh()
 
+    async def async_select_sim_slot(self, slot: int) -> None:
+        """Select and verify one physical SIM slot."""
+        if slot not in {1, 2}:
+            raise HomeAssistantError("SIM slot must be 1 or 2")
+
+        previous_primary = None
+        if self.data:
+            try:
+                candidate = int(self.data.sim_config.get("primary-slot-id", 0))
+            except (TypeError, ValueError):
+                candidate = 0
+            if candidate in {1, 2}:
+                previous_primary = candidate
+
+        async with self._write_lock:
+            try:
+                await self.client.async_set_primary_sim_slot(slot)
+                for _attempt in range(20):
+                    await asyncio.sleep(1)
+                    sim_state = await self.client.async_uiwwand("get-sim-state")
+                    try:
+                        active_slot = int(sim_state.get("slot", 0))
+                    except (TypeError, ValueError):
+                        active_slot = 0
+                    if (
+                        sim_state.get("active") is True
+                        and active_slot == slot
+                        and sim_state.get("card-data-basic") is True
+                        and bool(sim_state.get("iccid"))
+                        and not sim_state.get("operation-in-progress", False)
+                    ):
+                        break
+                else:
+                    if previous_primary is not None and previous_primary != slot:
+                        try:
+                            await self.client.async_set_primary_sim_slot(
+                                previous_primary
+                            )
+                        except U5GApiError:
+                            _LOGGER.exception(
+                                "Unable to restore primary SIM slot %s after "
+                                "slot %s failed to become ready",
+                                previous_primary,
+                                slot,
+                            )
+                    raise HomeAssistantError(
+                        f"Timed out waiting for SIM slot {slot} to become active"
+                    )
+            except U5GApiError as err:
+                raise HomeAssistantError(str(err)) from err
+
+        await self.async_request_refresh()
+
     async def async_forget_profiles(self, sim_ids: list[str]) -> None:
         """Forget inactive SIM profiles."""
         async with self._write_lock:

@@ -170,6 +170,12 @@ class U5GClient:
     async def async_get_snapshot(self, include_info: bool = False) -> ModemSnapshot:
         """Read SIM, preferences, status, and optionally hub identity."""
         sim_state = await self.async_uiwwand("get-sim-state")
+        try:
+            sim_config = await self.async_uiwwand("get-sim-config")
+        except U5GAuthenticationError:
+            raise
+        except U5GApiError:
+            sim_config = {}
         preference_data = await self.async_uiwwand("get-radio-pref")
         radio_status = await self.async_uiwwand("get-radio-status")
         active_rat = str(
@@ -198,6 +204,7 @@ class U5GClient:
         info = await self.async_get_info() if include_info else {}
         return ModemSnapshot(
             sim_state=sim_state,
+            sim_config=sim_config,
             radio_preference=RadioPreference.from_uiwwand(preference_data),
             radio_status=radio_status,
             modem_info=info,
@@ -206,6 +213,12 @@ class U5GClient:
     async def async_set_preference(self, iccid: str, preference: RadioPreference) -> None:
         """Atomically set a complete radio preference."""
         await self.async_uiwwand("set-radio-pref", preference.to_uiwwand(iccid))
+
+    async def async_set_primary_sim_slot(self, slot: int) -> None:
+        """Set the preferred SIM slot; uiwwand immediately activates it."""
+        await self.async_uiwwand(
+            "set-sim-config", {"primary-slot-id": int(slot)}
+        )
 
     async def async_probe(self) -> ProbeResult:
         """Pair using trust-on-first-use and return the key to pin afterward."""
